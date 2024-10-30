@@ -19,6 +19,8 @@ from config import (
     INFERENCE_CONFIG
 )
 
+# Global flag to control cache usage
+USE_CACHED_DATA = False  # Set to False to force rebuild dataset
 
 class DataPreprocessor:
     """Handles data preprocessing and augmentation"""
@@ -201,9 +203,9 @@ class KinFaceDataManager:
 
     def _initialize_data(self):
         """Initialize or load cached data with progress tracking"""
-        cached_data = self._load_cache()
+        cached_data = self._load_cache() if USE_CACHED_DATA else None
 
-        if cached_data is not None:
+        if cached_data is not None and USE_CACHED_DATA:
             logging.info("Loading cached dataset...")
             self._create_dataloaders(cached_data)
             return

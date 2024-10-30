@@ -314,7 +314,6 @@ def train_all_models():
     """Train all available models"""
     data_manager = KinFaceDataManager()
     model_classes = [KinshipNet, KinshipNet_2, SimpleNet]
-    model_classes = [KinshipNet_2]
     results = {}
 
     for model_class in model_classes:

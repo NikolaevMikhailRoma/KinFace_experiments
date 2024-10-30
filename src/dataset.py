@@ -9,8 +9,8 @@ import numpy as np
 
 class KinshipDataset:
     """
-    Dataset class for managing file paths for kinship verification.
-    Does not load images, only manages paths and splits.
+    Enhanced dataset class for managing file paths for kinship verification.
+    Includes pair augmentation by swapping relatives and balanced negative pair generation.
     """
 
     def __init__(self, dataset_path: Path):
@@ -40,50 +40,66 @@ class KinshipDataset:
 
     def _create_all_pairs(self) -> List[Tuple[Path, Path, int]]:
         """
-        Create all possible pairs (both relative and non-relative)
+        Create all possible pairs with augmentation for relatives
         Returns list of tuples (img1_path, img2_path, label)
         """
         image_files = list(self.image_paths.keys())
         pairs = []
 
-        # Create positive pairs (relatives)
+        # Create positive pairs (relatives) with augmentation
+        relative_pairs = []
         for img1 in image_files:
             if img1.endswith('_1.jpg'):
                 img2 = img1.replace('_1.jpg', '_2.jpg')
                 if img2 in self.image_paths:
-                    pairs.append((
+                    # Add original pair
+                    relative_pairs.append((
                         self.image_paths[img1],
                         self.image_paths[img2],
                         1
                     ))
+                    # Add swapped pair for augmentation
+                    relative_pairs.append((
+                        self.image_paths[img2],
+                        self.image_paths[img1],
+                        1
+                    ))
+
+        # Calculate required number of negative pairs based on config ratios
+        num_relatives = len(relative_pairs)
+        target_ratio = DATASET_CONFIG['RELATIVE_TO_NON_RELATIVE_RATIO_TRAIN']
+        num_non_relatives = int(num_relatives * target_ratio)
 
         # Create negative pairs (non-relatives)
         all_images = list(self.image_paths.values())
-        num_positive = len(pairs)
-        max_negative = int(num_positive * max(
-            DATASET_CONFIG['RELATIVE_TO_NON_RELATIVE_RATIO_TRAIN'],
-            DATASET_CONFIG['RELATIVE_TO_NON_RELATIVE_RATIO_TEST']
-        ))
-
         negative_pairs = set()
-        while len(negative_pairs) < max_negative:
+        max_attempts = num_non_relatives * 10  # Avoid infinite loop
+        attempts = 0
+
+        while len(negative_pairs) < num_non_relatives and attempts < max_attempts:
             img1, img2 = random.sample(all_images, 2)
             if not self._is_relative_pair(img1.name, img2.name):
                 negative_pairs.add((img1, img2, 0))
+                # Also add swapped version for balance
+                negative_pairs.add((img2, img1, 0))
+            attempts += 1
 
-        pairs.extend(list(negative_pairs))
+        # Combine and shuffle all pairs
+        pairs = relative_pairs + list(negative_pairs)
+        random.shuffle(pairs)
+
         return pairs
 
     def create_train_val_test_split(self) -> Tuple[List, List, List]:
         """
         Split dataset into train, validation and test sets.
-        Maintains different relative/non-relative ratios for train and test sets.
+        Maintains balanced ratios for relatives/non-relatives in each split.
         """
         # Split positive and negative pairs
         positive_pairs = [p for p in self.pairs if p[2] == 1]
         negative_pairs = [p for p in self.pairs if p[2] == 0]
 
-        # Calculate sizes for initial split
+        # Calculate split sizes
         train_size = DATASET_CONFIG['TRAIN_RATIO']
         val_size = DATASET_CONFIG['VAL_RATIO'] / (1 - train_size)
 
@@ -95,17 +111,13 @@ class KinshipDataset:
             temp_pos, train_size=val_size, random_state=42
         )
 
-        # Calculate required negative samples for each split
-        train_neg_count = int(len(train_pos) * DATASET_CONFIG['RELATIVE_TO_NON_RELATIVE_RATIO_TRAIN'])
-        val_neg_count = int(len(val_pos))  # 1:1 ratio for validation
-        test_neg_count = int(len(test_pos) * DATASET_CONFIG['RELATIVE_TO_NON_RELATIVE_RATIO_TEST'])
-
-        # Randomly sample negative pairs
-        random.shuffle(negative_pairs)
-        train_neg = negative_pairs[:train_neg_count]
-        val_neg = negative_pairs[train_neg_count:train_neg_count + val_neg_count]
-        test_neg = negative_pairs[train_neg_count + val_neg_count:
-                                  train_neg_count + val_neg_count + test_neg_count]
+        # Split negative pairs maintaining the same ratio
+        train_neg, temp_neg = train_test_split(
+            negative_pairs, train_size=train_size, random_state=42
+        )
+        val_neg, test_neg = train_test_split(
+            temp_neg, train_size=val_size, random_state=42
+        )
 
         # Combine and shuffle splits
         train_set = train_pos + train_neg
